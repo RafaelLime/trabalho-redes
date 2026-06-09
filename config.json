@@ -1,0 +1,13 @@
+{
+  "name": "alice",
+  "namespace": "CIC",
+  "listen_port": 4000,
+  "rendezvous_host": "pyp2p.mfcaetano.cc",
+  "rendezvous_port": 8080,
+  "ttl": 3600,
+  "ping_interval": 30,
+  "ack_timeout": 5,
+  "discover_interval": 20,
+  "max_reconnect_attempts": 5,
+  "log_level": "INFO"
+}
