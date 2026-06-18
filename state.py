@@ -124,14 +124,34 @@ def utc_timestamp() -> str:
 def encode_line(msg: dict[str, Any]) -> bytes:
     """Serializa um dict para uma linha JSON UTF-8 terminada em `\\n`.
 
-    TODO: validar tamanho ≤ MAX_MSG_SIZE antes de enviar.
+    Levanta ValueError se a linha resultante exceder MAX_MSG_SIZE.
     """
-    raise NotImplementedError
+    text = json.dumps(msg, ensure_ascii=False, separators=(",", ":"))
+    data = text.encode(ENCODING) + LINE_DELIMITER
+    if len(data) > MAX_MSG_SIZE:
+        raise ValueError(
+            f"mensagem excede o tamanho máximo de {MAX_MSG_SIZE} bytes "
+            f"({len(data)} bytes)"
+        )
+    return data
 
 
 def decode_line(line: bytes) -> dict[str, Any]:
     """Desserializa uma linha JSON recebida em dict.
 
-    TODO: validar tamanho e tratar JSON inválido.
+    Aceita a linha com ou sem o `\\n` final. Levanta ValueError se a linha
+    exceder MAX_MSG_SIZE, não for JSON válido ou não for um objeto JSON.
     """
-    raise NotImplementedError
+    if len(line) > MAX_MSG_SIZE:
+        raise ValueError(
+            f"linha excede o tamanho máximo de {MAX_MSG_SIZE} bytes "
+            f"({len(line)} bytes)"
+        )
+    text = line.rstrip(LINE_DELIMITER).decode(ENCODING)
+    try:
+        msg = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"JSON inválido: {exc}") from exc
+    if not isinstance(msg, dict):
+        raise ValueError(f"esperado objeto JSON, recebido {type(msg).__name__}")
+    return msg

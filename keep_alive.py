@@ -9,13 +9,19 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from typing import TYPE_CHECKING
+
+from state import MsgType, P2P_TTL, new_msg_id, utc_timestamp
 
 if TYPE_CHECKING:
     from peer_connection import PeerConnection
     from peer_table import PeerTable
 
 LOG = logging.getLogger("KeepAlive")
+
+# Quantos RTTs recentes guardar por peer para a média.
+_RTT_HISTORY = 20
 
 
 class KeepAlive:
@@ -38,47 +44,111 @@ class KeepAlive:
         self._stop = threading.Event()
 
     def start(self) -> None:
-        """Inicia a thread periódica de PING.
-
-        TODO: criar self._thread em loop até self._stop.
-        """
-        raise NotImplementedError
+        """Inicia a thread periódica de PING."""
+        self._stop.clear()
+        self._thread = threading.Thread(
+            target=self._ping_loop, name="keepalive", daemon=True
+        )
+        self._thread.start()
+        LOG.info("Keep-alive iniciado (PING a cada %ds)", self.ping_interval)
 
     def stop(self) -> None:
         """Sinaliza parada da thread de keep-alive."""
         self._stop.set()
 
     def _ping_loop(self) -> None:
-        """A cada ping_interval, envia PING para cada conexão ativa.
-
-        TODO: iterar conexões ativas, send_ping, checar pendências vencidas.
-        """
-        raise NotImplementedError
+        """A cada ping_interval, envia PING para cada conexão ativa."""
+        while not self._stop.wait(self.ping_interval):
+            conns = self.peer_table.active_connections()
+            sent = 0
+            for conn in conns:
+                try:
+                    self.send_ping(conn)
+                    sent += 1
+                except OSError:
+                    pass  # conexão morrendo; o reader/close trata
+            self._check_timeouts()
+            if sent:
+                avg = self._overall_avg_rtt()
+                if avg is not None:
+                    LOG.info("Sent %d PINGs | Average RTT = %.1f ms", sent, avg)
+                else:
+                    LOG.info("Sent %d PINGs | Average RTT = n/a", sent)
 
     def send_ping(self, conn: "PeerConnection") -> None:
-        """Envia um PING (msg_id + timestamp) e registra a pendência.
-
-        TODO: montar PING, guardar em self._pending, conn.send.
-        """
-        raise NotImplementedError
+        """Envia um PING (msg_id + timestamp) e registra a pendência."""
+        if conn.peer_id is None:
+            return
+        msg_id = new_msg_id()
+        msg = {
+            "type": MsgType.PING.value,
+            "msg_id": msg_id,
+            "timestamp": utc_timestamp(),
+            "ttl": P2P_TTL,
+        }
+        with self._lock:
+            self._pending[msg_id] = (conn.peer_id, time.monotonic())
+            self._ping_count += 1
+        conn.send(msg)
 
     def on_ping(self, conn: "PeerConnection", msg: dict) -> None:
-        """Responde PONG ao receber PING (mesmo msg_id).
-
-        TODO: montar PONG com msg_id recebido e enviar.
-        """
-        raise NotImplementedError
+        """Responde PONG ao receber PING (mesmo msg_id)."""
+        pong = {
+            "type": MsgType.PONG.value,
+            "msg_id": msg.get("msg_id"),
+            "timestamp": utc_timestamp(),
+            "ttl": P2P_TTL,
+        }
+        try:
+            conn.send(pong)
+        except OSError:
+            pass
 
     def on_pong(self, conn: "PeerConnection", msg: dict) -> None:
-        """Casa PONG por msg_id, calcula RTT e atualiza estatísticas.
+        """Casa PONG por msg_id, calcula RTT e atualiza estatísticas."""
+        msg_id = msg.get("msg_id")
+        with self._lock:
+            pending = self._pending.pop(msg_id, None)
+        if pending is None:
+            return  # PONG desconhecido ou já expirado
+        peer_id, sent_at = pending
+        rtt = (time.monotonic() - sent_at) * 1000.0  # ms
+        with self._lock:
+            history = self._rtts.setdefault(peer_id, [])
+            history.append(rtt)
+            del history[:-_RTT_HISTORY]
+        LOG.debug("PONG de %s | RTT = %.1f ms", peer_id, rtt)
 
-        TODO: remover de self._pending, calcular RTT, registrar.
-        """
-        raise NotImplementedError
+    def _check_timeouts(self) -> None:
+        """Pendências antigas (> 2x ping_interval) marcam o peer como STALE."""
+        now = time.monotonic()
+        threshold = self.ping_interval * 2
+        stale_peers: set[str] = set()
+        with self._lock:
+            expired = [
+                (mid, pid)
+                for mid, (pid, sent_at) in self._pending.items()
+                if now - sent_at > threshold
+            ]
+            for mid, pid in expired:
+                self._pending.pop(mid, None)
+                stale_peers.add(pid)
+        for pid in stale_peers:
+            LOG.warning("Peer %s não respondeu PING; marcando STALE", pid)
+            self.peer_table.mark_stale(pid)
 
     def average_rtt(self, peer_id: str) -> float | None:
-        """Retorna o RTT médio (ms) registrado para um peer, se houver.
+        """Retorna o RTT médio (ms) registrado para um peer, se houver."""
+        with self._lock:
+            rtts = self._rtts.get(peer_id)
+            if not rtts:
+                return None
+            return sum(rtts) / len(rtts)
 
-        TODO: média de self._rtts[peer_id].
-        """
-        raise NotImplementedError
+    def _overall_avg_rtt(self) -> float | None:
+        """RTT médio (ms) considerando todos os peers, se houver amostras."""
+        with self._lock:
+            samples = [r for lst in self._rtts.values() for r in lst]
+        if not samples:
+            return None
+        return sum(samples) / len(samples)
