@@ -288,6 +288,7 @@ class P2PClient:
         if conn.peer_id is None:
             return
         self.peer_table.clear_conn(conn.peer_id, conn)
+        self.keep_alive.clear_peer(conn.peer_id)
         entry = self.peer_table.get(conn.peer_id)
         if entry is None or self._stop.is_set():
             return

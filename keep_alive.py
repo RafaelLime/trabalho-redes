@@ -120,22 +120,45 @@ class KeepAlive:
         LOG.debug("PONG de %s | RTT = %.1f ms", peer_id, rtt)
 
     def _check_timeouts(self) -> None:
-        """Pendências antigas (> 2x ping_interval) marcam o peer como STALE."""
+        """Pendências antigas (> 2x ping_interval) marcam o peer como STALE.
+
+        Além de marcar STALE, fecha a conexão morta para disparar o caminho de
+        reconexão (`_on_conn_close`), cobrindo o caso de um peer que fica mudo
+        sem fechar o socket (queda de rede/máquina, sem FIN).
+        """
         now = time.monotonic()
         threshold = self.ping_interval * 2
-        stale_peers: set[str] = set()
         with self._lock:
-            expired = [
-                (mid, pid)
-                for mid, (pid, sent_at) in self._pending.items()
+            stale_peers = {
+                pid
+                for (pid, sent_at) in self._pending.values()
                 if now - sent_at > threshold
-            ]
-            for mid, pid in expired:
-                self._pending.pop(mid, None)
-                stale_peers.add(pid)
+            }
+            if stale_peers:
+                # Descarta TODAS as pendências dos peers vencidos para evitar
+                # falsos STALE numa futura reconexão.
+                self._pending = {
+                    mid: v
+                    for mid, v in self._pending.items()
+                    if v[0] not in stale_peers
+                }
         for pid in stale_peers:
-            LOG.warning("Peer %s não respondeu PING; marcando STALE", pid)
+            LOG.warning("Peer %s não respondeu a PING; marcando STALE", pid)
             self.peer_table.mark_stale(pid)
+            entry = self.peer_table.get(pid)
+            if entry is not None and entry.conn is not None:
+                entry.conn.close("ping timeout")
+
+    def clear_peer(self, peer_id: str) -> None:
+        """Remove PINGs pendentes de um peer (chamado quando a conexão fecha).
+
+        Evita que um PING antigo expire após a reconexão e marque a conexão
+        nova como STALE por engano.
+        """
+        with self._lock:
+            self._pending = {
+                mid: v for mid, v in self._pending.items() if v[0] != peer_id
+            }
 
     def average_rtt(self, peer_id: str) -> float | None:
         """Retorna o RTT médio (ms) registrado para um peer, se houver."""

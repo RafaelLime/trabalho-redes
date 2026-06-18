@@ -113,8 +113,7 @@ tempo real. Sem relay / sem multi-hop (`ttl` fixo em `1`).
 - [x] 1. Conexão direta — 2 peers no mesmo namespace trocando `/msg` e `/pub #ns`
 - [x] 2. Descoberta automática — peers se registram e se descobrem periodicamente
 - [x] 3. Keep-alive — PING/PONG e RTT aparecem nos logs
-- [ ] 4. Reconexão — peer cai, vira STALE, reconecta automaticamente com backoff
-      _(implementado; falta teste explícito derrubando um peer)_
+- [x] 4. Reconexão — peer cai, vira STALE, reconecta automaticamente com backoff
 - [x] 5. Encerramento — BYE/BYE_OK + UNREGISTER funcionando
 - [x] 6. CLI — `/msg`, `/pub`, `/rtt`, `/conn`, `/reconnect`, `/log`, `/quit`
 
