@@ -1,0 +1,21 @@
+@startuml Classes
+
+class CLI {
+    
+    -client: P2PClient
+    -_running: bool
+    +run(): None
+    +dispatch(line: str): None
+    +cmd_peers(namespace: str | None): None
+    +cmd_msg(peer_id: str, message: str): None
+    +cmd_pub(namespace: str, message: str): None
+    +cmd_conn(): None
+    +cmd_rtt(): None
+    +cmd_reconnect(): None
+    +cmd_log(level: str): None
+    +cmd_help(): None
+    +cmd_quit(): None
+    
+}
+
+@enduml
