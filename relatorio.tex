@@ -392,6 +392,31 @@ Os comandos da CLI foram exercitados ao longo dos cenários acima. O comando \te
   bob@CIC  [outbound]
 \end{lstlisting}
 
+\subsection{Conectividade entre Redes Distintas: Travessia de NAT via Rede \textit{Overlay}}
+\label{subsec:nat}
+Os cenários anteriores foram validados com os dois peers em uma mesma máquina. Para exercitar o sistema em condição realista, conduziu-se um teste complementar com dois peers em \textbf{máquinas e redes residenciais distintas}, cada qual atrás de seu próprio roteador NAT. Esse cenário expôs uma limitação fundamental da comunicação P2P na Internet, cujo diagnóstico e solução merecem registro.
+
+\textbf{Sintoma observado.} Ambos os peers \textit{enxergavam} um ao outro no comando \texttt{/peers} --- isto é, a descoberta via Rendezvous funcionava normalmente ---, mas toda tentativa de \texttt{/msg} falhava com o aviso ``não conectado'': a conexão TCP direta entre eles jamais se estabelecia.
+
+\textbf{Causa: o NAT.} O \textit{Network Address Translation} permite que múltiplos dispositivos de uma rede doméstica compartilhem um único endereço IP público~\cite{kurose}. O roteador mantém uma tabela de tradução cujas entradas são criadas \textit{apenas} quando um host interno inicia uma conexão de \textbf{saída}. As mensagens de DISCOVER funcionam justamente por serem conexões curtas de saída, dirigidas ao servidor. Já a conexão P2P exige que um dos peers \textbf{aceite} uma conexão de \textbf{entrada não solicitada} em sua porta de escuta; ao chegar ao roteador do destinatário, esse pacote inicial (TCP SYN) não encontra entrada correspondente na tabela de tradução e é \textit{descartado}. Como, pela regra de \textit{dedupe}, sempre há um lado que apenas aceita conexões, a comunicação direta entre dois peers atrás de NATs distintos torna-se inviável sem mecanismos adicionais. Cabe destacar que o servidor Rendezvous resolve apenas a \textit{descoberta} (a localização mútua dos peers), e não a \textit{conectividade} direta entre eles --- dois problemas distintos.
+
+\textbf{Travessia de NAT em aplicações reais.} A solução desse problema é tipicamente obtida por técnicas de \textit{hole punching} sobre UDP, coordenadas por servidores STUN, com \textit{relay} (TURN) como alternativa quando o \textit{hole punching} falha --- conjunto consolidado no \textit{framework} ICE. Tais técnicas, contudo, estão fora do escopo desta aplicação, que opera exclusivamente sobre TCP e que, por especificação, não admite \textit{relay} na camada de aplicação, com \texttt{ttl} fixo em 1~\cite{pyp2p}.
+
+\textbf{Solução adotada: rede \textit{overlay}.} Optou-se, portanto, por resolver a travessia de NAT na \textbf{camada de rede}, de forma transparente à aplicação, por meio de uma \textbf{rede \textit{overlay}} --- uma VPN ponto a ponto que constrói uma LAN virtual sobre a Internet. Utilizou-se a ferramenta Hamachi, que opera em quatro etapas: (i) cria em cada máquina uma interface de rede virtual (\texttt{ham0}) com um endereço IP roteável na faixa \texttt{25.x.x.x}; (ii) quando a aplicação envia um pacote a esse endereço virtual, o software o encapsula (\textit{tunneling}) dentro de um datagrama UDP cifrado, endereçado ao IP público real do destino; (iii) para abrir o caminho entre os roteadores, ambos os clientes mantêm conexões de \textit{saída} a um \textbf{servidor mediador} que, à semelhança de um servidor STUN, observa o endereço público de cada par e coordena o \textit{hole punching} entre eles; (iv) caso a conexão direta não se estabeleça, o tráfego é encaminhado (\textit{relayed}) pelos servidores da ferramenta. O ponto essencial é que toda essa travessia ocorre \textit{abaixo} da aplicação: do ponto de vista do cliente P2P, os dois peers passam a estar em uma mesma rede local, e o código TCP --- \textbf{sem qualquer alteração} --- volta a estabelecer conexões diretas.
+
+\textbf{Resultado.} Para o teste, bastou ajustar o campo \texttt{rendezvous\_host} dos dois clientes para o endereço \textit{overlay} da máquina que hospeda o Rendezvous, garantindo que o servidor registrasse os endereços da rede virtual (\texttt{25.x.x.x}), e não os IPs públicos inalcançáveis. Como os endereços \textit{overlay} dos dois peers são distintos, a heurística de \textit{loopback} do método \texttt{\_dial\_host} não é acionada e o \textit{dialer} disca diretamente o endereço virtual do par remoto. Os logs evidenciam a conexão estabelecida sobre a rede virtual:
+
+\begin{lstlisting}[style=terminal]
+INFO [Rendezvous] REGISTER OK: alice@CIC -> 25.30.252.207:4000 (ttl=3600s)
+INFO [Rendezvous] DISCOVER OK: 2 peer(s) no namespace CIC
+INFO [PeerTable] Novo peer descoberto: bob@CIC (25.42.118.50:4001)
+INFO [Client] Conectando a bob@CIC (25.42.118.50:4001)...
+INFO [PeerConn] Handshake OK (outbound) com bob@CIC
+INFO [Client] Conectado a bob@CIC
+\end{lstlisting}
+
+Com isso, validou-se a troca de mensagens entre peers em redes fisicamente distintas, confirmando que o cliente é funcional em um cenário realista de Internet. Ressalta-se que a limitação encontrada é de \textit{conectividade de rede} (NAT), e não da aplicação: provida a alcançabilidade entre os pares --- aqui, pela rede \textit{overlay} ---, o protocolo implementado opera corretamente.
+
 \subsection{Síntese dos Resultados}
 A Tabela~\ref{tab:resultados} resume os seis cenários de teste e seus resultados. Todos os critérios funcionais previstos na especificação foram exercitados com sucesso em execução real.
 
@@ -426,7 +451,7 @@ Do ponto de vista do aprendizado, o projeto consolidou de forma prática os conc
 
 As principais dificuldades enfrentadas foram inerentes à natureza concorrente e distribuída do sistema. A coordenação de múltiplas \textit{threads} exigiu cuidado com a segurança de acesso ao estado compartilhado, resolvido com o uso disciplinado de \textit{locks} e do padrão \texttt{threading.Event} para o encerramento ordenado. O ambiente real de rede, com peers atrás de NAT, motivou o tratamento de \textit{loopback} para viabilizar testes locais. Por fim, a distinção entre quedas inesperadas e saídas intencionais --- essencial para acionar a reconexão apenas quando apropriado --- exigiu uma modelagem explícita do ciclo de vida de cada peer.
 
-Como evoluções futuras, o sistema poderia incorporar criptografia das mensagens para garantir confidencialidade, persistência do histórico de conversas e uma interface gráfica em substituição à CLI. Conclui-se que os objetivos do trabalho foram plenamente alcançados, resultando em uma aplicação modular, robusta e fiel à especificação do protocolo.
+Como evoluções futuras, o sistema poderia incorporar a travessia automática de NAT na própria aplicação --- por exemplo, via UPnP/NAT-PMP ou \textit{hole punching} sobre UDP coordenado por um servidor STUN ---, eliminando a dependência de redes \textit{overlay} externas (Seção~\ref{subsec:nat}); criptografia das mensagens para garantir confidencialidade; persistência do histórico de conversas; e uma interface gráfica em substituição à CLI. Conclui-se que os objetivos do trabalho foram plenamente alcançados, resultando em uma aplicação modular, robusta e fiel à especificação do protocolo.
 
 \begin{thebibliography}{9}
 \bibitem{kurose} 
