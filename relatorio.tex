@@ -1,0 +1,163 @@
+\documentclass[12pt, a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[portuguese]{babel}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{geometry}
+\geometry{a4paper, margin=2.5cm}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\lstdefinestyle{terminal}{
+    backgroundcolor=\color{black!90},
+    basicstyle=\small\ttfamily\color{white},
+    keywordstyle=\color{green!70!black},
+    stringstyle=\color{yellow},
+    identifierstyle=\color{cyan},
+    showstringspaces=false,
+    breaklines=true,
+    frame=single, % adiciona uma borda
+    rulecolor=\color{black!90}
+}
+
+\title{\textbf{Relatório do Trabalho de Programação}\\ Chat P2P com Servidor Rendezvous}
+\author{Seu Nome / Matrícula}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Este documento descreve a arquitetura, implementação e testes de um cliente de Chat P2P desenvolvido para a disciplina de Redes de Computadores. O sistema utiliza conexões TCP diretas entre pares, com o auxílio de um servidor Rendezvous para a descoberta inicial, implementando um protocolo próprio de mensagens na camada de aplicação estruturado em JSON.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Introdução}
+% Descreva brevemente o contexto do trabalho, os objetivos principais e o que será apresentado neste relatório.
+O projeto apresentado neste documento é o trabalho final para a disciplina de Redes de Computadores e tem como objetivo a implementação de um cliente de chat P2P funcional. O cliente deve se registrar e descobrir outros peers com auxílio de um servidor Rendezvous, estabelecer e manter conexões TCP persistentes com outros peers e trocar mensagens em tempo real por meio de comandos \cite{pyp2p}.
+
+Este relatório aborda as instruções para o funcionamento do programa em um ambiente Linux, a teoria por trás do projeto, a arquitetura e os resultados.
+
+\section{Instruções de Execução}
+% Seção adicionada para atender aos requisitos específicos de execução no Linux.
+Esta seção busca explicar o passo a passo para executar o programa em uma máquina com um sistema operacional Linux. Para executar em Windows e Mac, consulte o arquivo \textcolor{blue}{README.md}.
+
+\subsection{Requisitos Mínimos (Linux)}
+% Quais são os requisitos mínimos para rodar o programa em Linux? 
+% Lembre-se que é obrigatório rodar no Linux. Especifique a versão do SO (ex: Ubuntu 20.04+) e do interpretador (ex: Python 3.8+).
+O usuário que desejar executar o programa em Linux deve possuir Python versão 3.9 ou superior instalado em sua máquina. Além disso, deve ter acesso à rede para alcançar o servidor Rendezvous.
+
+\subsection{Dependências e Bibliotecas}
+% Quais bibliotecas precisam ser instaladas e como instalá-las?
+% Se usou apenas bibliotecas nativas, deixe claro: "O projeto utiliza apenas bibliotecas padrão do Python (como socket, json, threading, logging), não sendo necessária a instalação de pacotes externos."
+% Se usou algo externo, indique o comando: pip install -r requirements.txt
+As bibliotecas utilizadas neste projeto são nativas do Python (como socket, json e threading), não havendo dependências externas.
+
+\subsection{Compilação}
+% Caso tenha utilizado uma linguagem compilada, como deve ser feita a compilação do código?
+Por se tratar de um projeto desenvolvido em Python, que é uma linguagem interpretada, não há etapa de compilação prévia. O código é interpretado em tempo de execução.
+
+
+\subsection{Passos para Execução}
+% Quais são os passos necessários para executar o programa?
+% Exemplo:
+% 1. Abra o terminal do Linux.
+% 2. Navegue até a pasta raiz do projeto: cd trabalho-redes-main
+% 3. Execute o arquivo principal: python3 main.py
+\begin{enumerate}
+    \item (Opcional, recomendado) no terminal do Linux crie e ative um ambiente virtual:
+    \begin{lstlisting}[style=terminal]
+python3 -m venv .venv
+source .venv/bin/activate 
+    \end{lstlisting}
+    \item Ajuste o arquivo \textcolor{blue}{config.json} com name, namespace e listen\_port desejados.
+    \item Execute o cliente:
+    \begin{lstlisting}[style=terminal]
+python3 main.py --config config.json
+    \end{lstlisting}
+    Os comandos a serem utilizados serão apresentados na seção \ref{sec:Arq}.
+\end{enumerate}
+
+\section{Fundamentação Teórica}
+% Discorra sobre os conceitos de Redes de Computadores que basearam o trabalho.
+O desenvolvimento deste projeto fundamenta-se nos conceitos essenciais da camada de aplicação e da camada de transporte, seguindo a abordagem clássica de redes de computadores de Kurose e Ross~\cite{kurose}. Esta seção aborda as arquiteturas de rede envolvidas, os mecanismos de definição de protocolos de aplicação e a utilização de sockets para transporte confiável de dados.
+
+\subsection{Arquiteturas de Redes: Cliente-Servidor vs. Peer-to-Peer (P2P)}
+
+As aplicações de rede baseiam-se em modelos estruturais que definem como os nós finais interagem entre si. Os dois principais paradigmas utilizados na Internet são o modelo Cliente-Servidor e o modelo Peer-to-Peer (P2P)~\cite{kurose}.
+
+No modelo \textbf{Cliente-Servidor}, existe uma distinção clara entre os papéis dos nós. O servidor é uma entidade centralizadora, permanentemente ativa (\textit{always-on}) e dotada de um endereço IP fixo ou bem conhecido, responsável por responder de forma reativa às requisições provindas dos clientes~\cite{kurose}. Os clientes, por sua vez, não se comunicam diretamente entre si, dependendo exclusivamente da infraestrutura do servidor para mediar qualquer interação ou prover recursos.
+
+Em contrapartida, a arquitetura \textbf{Peer-to-Peer (P2P)} elimina a necessidade de servidores centrais dedicados para a troca de dados principais. Sistemas terminais arbitrários (denominados \textit{peers} ou pares) comunicam-se diretamente entre si, atuando simultaneamente como clientes (quando solicitam um serviço) e servidores (quando fornecem um serviço)~\cite{kurose}. A principal vantagem desse modelo é a sua autoescalabilidade (\textit{self-scalability}): cada novo par adicionado à rede introduz tanto novas demandas de tráfego quanto novos recursos de processamento e largura de banda, aliviando a carga agregada do sistema~\cite{kurose}. Além disso, a descentralização confere maior resiliência a falhas isoladas e adequação ao dinamismo decorrente da entrada e saída frequente e inesperada de nós na rede~\cite{pyp2p}.
+
+Este trabalho é centrado no paradigma P2P. Entretanto, a arquitetura de descoberta e registro dos Peers é baseada em um servidor Rendezvous centralizado, que já foi implementado pelo professor. Desse modo, a parte a ser implementada é a infraestrutura de mensagens, difusão e gerenciamento do chat, que opera sob modelo P2P, com conexões TCP diretas, porém sem mecanismos de relay ou intermediários de transporte na camada de aplicação~\cite{pyp2p}.
+
+\subsection{Protocolos da Camada de Aplicação}
+
+A camada de aplicação é o local onde residem os programas e softwares que utilizam a rede para comunicação entre sistemas finais. Um protocolo de camada de aplicação define as regras de como esses processos trocam mensagens entre si~\cite{kurose}. Segundo a literatura clássica, um protocolo de aplicação deve especificar rigidamente:
+\begin{itemize}
+    \item \textbf{Tipos de mensagens}: se são mensagens de requisição, resposta, controle ou sinalização~\cite{kurose}.
+    \item \textbf{Sintaxe}: os campos contidos na mensagem e como eles são estruturados e delimitados~\cite{kurose}.
+    \item \textbf{Semântica}: o significado e a interpretação de cada campo de informação enviado~\cite{kurose}.
+    \item \textbf{Regras de processamento}: as ações que determinam quando e como um processo envia mensagens e responde a eventos recebidos~\cite{kurose}.
+\end{itemize}
+
+No escopo do protocolo projetado para este trabalho, a sintaxe baseia-se em objetos JSON codificados em formato UTF-8 e obrigatoriamente delimitados pelo caractere de quebra de linha (\verb|\n|), contendo um tamanho máximo estrito de 32 KiB por datagrama de aplicação~\cite{pyp2p}. A semântica engloba comandos operacionais essenciais para o ciclo de vida e a coordenação do chat, tais como \texttt{HELLO} e \texttt{HELLO\_OK} para handshakes na aplicação, \texttt{PING} e \texttt{PONG} para monitoramento de vivacidade, além de primitivas de dados como \texttt{SEND}, \texttt{ACK} e \texttt{PUB}~\cite{pyp2p}.
+
+\subsection{Camada de Transporte e Sockets TCP}
+Para que os processos de aplicação distribuídos em máquinas distintas possam trocar dados, eles utilizam a interface fornecida pelo sistema operacional conhecida como \textbf{Socket API}~\cite{kurose}. O socket funciona como a porta de entrada e saída pela qual a aplicação entrega dados para a infraestrutura de rede subjacente e recebe dados vindos dela~\cite{kurose}.
+
+A escolha do protocolo da camada de transporte depende estritamente dos requisitos da aplicação em termos de perda de dados, vazão, temporização e segurança~\cite{kurose}. Para uma aplicação de chat textual e troca de mensagens de controle de estado, a integridade total dos dados é mandatória, tornando o uso de transmissões confiáveis essencial. Por esse motivo, o projeto emprega exclusivamente o protocolo \textbf{TCP} (\textit{Transmission Control Protocol})~\cite{pyp2p}.
+
+O TCP oferece um modelo de serviço de transporte confiável e orientado a conexão, caracterizado por:
+\begin{itemize}
+    \item \textbf{Entrega garantida e ordenada}: assegura que os bytes enviados cheguem ao destino sem perdas, duplicações ou inversão de ordem~\cite{kurose}.
+    \item \textbf{Fluxo contínuo de bytes}: trata os dados como um fluxo contínuo (\textit{byte stream}), exigindo que a aplicação defina delimitadores claros (como o caractere \verb|\n| adotado) para que o receptor consiga reconstruir e interpretar as mensagens JSON individuais sem fragmentação na leitura~\cite{pyp2p}.
+    \item \textbf{Orientação a conexão}: requer um procedimento inicial de estabelecimento de canal físico/lógico (\textit{three-way handshake}) a nível de transporte antes do início do fluxo de dados da aplicação~\cite{kurose}.
+\end{itemize}
+
+Na programação de sockets TCP em arquiteturas P2P, cada par deve implementar concorrência estruturada (tipicamente por meio de múltiplas \textit{threads}). Isso ocorre porque cada nó precisa atuar simultaneamente como um servidor TCP passivo — criando um socket de escuta (\textit{listening socket}), associando-o a uma porta local via \texttt{bind}, colocando-o em modo de escuta com \texttt{listen} e aguardando conexões por meio de \texttt{accept} — e como um cliente TCP ativo, iniciando sockets de conexão direta via \texttt{connect} para interagir com portas remotas de outros nós descobertos~\cite{kurose}.
+
+
+\section{Arquitetura e Implementação}\label{sec:Arq}
+% Apresente a arquitetura da sua solução e os protocolos implementados.
+
+\subsection{Visão Geral do Sistema e Módulos}
+% Apresente a arquitetura da sua solução.
+
+\subsection{Integração com Servidor Rendezvous}
+% Detalhes do registro e descoberta.
+
+\subsection{Protocolo de Comunicação P2P (Camada de Aplicação)}
+% Explique o formato padrão (JSON). 
+% ATENÇÃO: Inclua os EXEMPLOS DE FUNCIONAMENTO exigidos aqui, mostrando os JSONs trocados.
+\subsubsection{Estabelecimento de Conexão (HELLO / HELLO\_OK)}
+\subsubsection{Manutenção de Sessão (PING / PONG e Cálculo de RTT)}
+\subsubsection{Roteamento de Mensagens (SEND / ACK e PUB)}
+\subsubsection{Encerramento Limpo (BYE / BYE\_OK)}
+
+\subsection{Gerenciamento de Estado e Tolerância a Falhas}
+% Tabela de peers, timeouts e reconexão.
+
+\section{Metodologia de Testes e Resultados}
+% Mostre mais exemplos de funcionamento em uso real (prints do terminal).
+
+\section{Conclusão}
+% Resuma o que foi aprendido no projeto e valide se todos os objetivos foram alcançados.
+
+\begin{thebibliography}{9}
+\bibitem{kurose} 
+KUROSE, James F.; ROSS, Keith W. 
+\textit{Redes de Computadores e a Internet: Uma Abordagem Top-Down}. 
+8ª ed. Pearson, 2021.
+
+\bibitem{pyp2p}
+CAETANO, M. F.
+\textit{Documentação do Protocolo Rendezvous}. 
+Disponível em: \url{https://github.com/mfcaetano/pyp2p-rdv}. Acesso em: \today.
+\end{thebibliography}
+
+\end{document}
