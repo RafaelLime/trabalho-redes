@@ -38,3 +38,7 @@ htmlcov/
 
 # macOS
 .DS_Store
+
+TODO.md
+specs.md
+CLAUDE.md
