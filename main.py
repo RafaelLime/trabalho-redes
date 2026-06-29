@@ -1,4 +1,11 @@
-"""main.py — Ponto de entrada da aplicação.
+"""
+Redes de Computadores
+Grupo 6
+Bruno Suxberger Valadares Araújo / 231012728
+Iago Vale de Medeiros / 242039167
+Rafael de Lima Pereira / 242043277
+
+main.py — Ponto de entrada da aplicação.
 
 Lê argumentos/config, inicializa o logging e sobe o P2PClient com a CLI.
 

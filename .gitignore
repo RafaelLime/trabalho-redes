@@ -39,6 +39,14 @@ htmlcov/
 # macOS
 .DS_Store
 
+TODO.md
+specs.md
+CLAUDE.md
+
+TODO.md
+specs.md
+CLAUDE.md
+
 # arquivo Config
 config.json
 /commands/

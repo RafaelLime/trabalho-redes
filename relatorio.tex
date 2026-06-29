@@ -1,0 +1,468 @@
+\documentclass[12pt, a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[portuguese]{babel}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{geometry}
+\geometry{a4paper, margin=2.5cm}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\lstdefinestyle{terminal}{
+    backgroundcolor=\color{black!90},
+    basicstyle=\small\ttfamily\color{white},
+    keywordstyle=\color{green!70!black},
+    stringstyle=\color{yellow},
+    identifierstyle=\color{cyan},
+    showstringspaces=false,
+    breaklines=true,
+    frame=single, % adiciona uma borda
+    rulecolor=\color{black!90}
+}
+
+\title{\textbf{Relatório do Trabalho de Programação}\\ Chat P2P com Servidor Rendezvous}
+\author{
+    Rafael de Lima Pereira / 242043277
+    \and Iago Vale de Medeiros / 242039167
+    \and Bruno Suxberger Valadares Araújo / 231012728
+}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Este documento descreve a arquitetura, implementação e testes de um cliente de Chat P2P desenvolvido para a disciplina de Redes de Computadores. O sistema utiliza conexões TCP diretas entre pares, com o auxílio de um servidor Rendezvous para a descoberta inicial, implementando um protocolo próprio de mensagens na camada de aplicação estruturado em JSON.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Introdução}
+% Descreva brevemente o contexto do trabalho, os objetivos principais e o que será apresentado neste relatório.
+O projeto apresentado neste documento é o trabalho final para a disciplina de Redes de Computadores e tem como objetivo a implementação de um cliente de chat P2P funcional. O cliente deve se registrar e descobrir outros peers com auxílio de um servidor Rendezvous, estabelecer e manter conexões TCP persistentes com outros peers e trocar mensagens em tempo real por meio de comandos \cite{pyp2p}.
+
+Este relatório aborda as instruções para o funcionamento do programa em um ambiente Linux, a teoria por trás do projeto, a arquitetura e os resultados.
+
+\section{Instruções de Execução}
+% Seção adicionada para atender aos requisitos específicos de execução no Linux.
+Esta seção busca explicar o passo a passo para executar o programa em uma máquina com um sistema operacional Linux. Para executar em Windows e Mac, consulte o arquivo \textcolor{blue}{README.md}.
+
+\subsection{Requisitos Mínimos (Linux)}
+% Quais são os requisitos mínimos para rodar o programa em Linux? 
+% Lembre-se que é obrigatório rodar no Linux. Especifique a versão do SO (ex: Ubuntu 20.04+) e do interpretador (ex: Python 3.8+).
+O usuário que desejar executar o programa em Linux deve possuir Python versão 3.9 ou superior instalado em sua máquina. Além disso, deve ter acesso à rede para alcançar o servidor Rendezvous.
+
+\subsection{Dependências e Bibliotecas}
+% Quais bibliotecas precisam ser instaladas e como instalá-las?
+% Se usou apenas bibliotecas nativas, deixe claro: "O projeto utiliza apenas bibliotecas padrão do Python (como socket, json, threading, logging), não sendo necessária a instalação de pacotes externos."
+% Se usou algo externo, indique o comando: pip install -r requirements.txt
+As bibliotecas utilizadas neste projeto são nativas do Python (como socket, json e threading), não havendo dependências externas.
+
+\subsection{Compilação}
+% Caso tenha utilizado uma linguagem compilada, como deve ser feita a compilação do código?
+Por se tratar de um projeto desenvolvido em Python, que é uma linguagem interpretada, não há etapa de compilação prévia. O código é interpretado em tempo de execução.
+
+
+\subsection{Passos para Execução}
+% Quais são os passos necessários para executar o programa?
+% Exemplo:
+% 1. Abra o terminal do Linux.
+% 2. Navegue até a pasta raiz do projeto: cd trabalho-redes-main
+% 3. Execute o arquivo principal: python3 main.py
+\begin{enumerate}
+    \item (Opcional, recomendado) no terminal do Linux crie e ative um ambiente virtual:
+    \begin{lstlisting}[style=terminal]
+python3 -m venv .venv
+source .venv/bin/activate 
+    \end{lstlisting}
+    \item Ajuste o arquivo \textcolor{blue}{config.json} com name, namespace e listen\_port desejados.
+    \item Execute o cliente:
+    \begin{lstlisting}[style=terminal]
+python3 main.py --config config.json
+    \end{lstlisting}
+    Os comandos a serem utilizados serão apresentados na seção \ref{sec:Arq}.
+\end{enumerate}
+
+\section{Fundamentação Teórica}
+\label{sec:fundamentacao}
+% Discorra sobre os conceitos de Redes de Computadores que basearam o trabalho.
+O desenvolvimento deste projeto fundamenta-se nos conceitos essenciais da camada de aplicação e da camada de transporte, seguindo a abordagem clássica de redes de computadores de Kurose e Ross~\cite{kurose}. Esta seção aborda as arquiteturas de rede envolvidas, os mecanismos de definição de protocolos de aplicação e a utilização de sockets para transporte confiável de dados.
+
+\subsection{Arquiteturas de Redes: Cliente-Servidor vs. Peer-to-Peer (P2P)}
+
+As aplicações de rede baseiam-se em modelos estruturais que definem como os nós finais interagem entre si. Os dois principais paradigmas utilizados na Internet são o modelo Cliente-Servidor e o modelo Peer-to-Peer (P2P)~\cite{kurose}.
+
+No modelo \textbf{Cliente-Servidor}, existe uma distinção clara entre os papéis dos nós. O servidor é uma entidade centralizadora, permanentemente ativa (\textit{always-on}) e dotada de um endereço IP fixo ou bem conhecido, responsável por responder de forma reativa às requisições provindas dos clientes~\cite{kurose}. Os clientes, por sua vez, não se comunicam diretamente entre si, dependendo exclusivamente da infraestrutura do servidor para mediar qualquer interação ou prover recursos.
+
+Em contrapartida, a arquitetura \textbf{Peer-to-Peer (P2P)} elimina a necessidade de servidores centrais dedicados para a troca de dados principais. Sistemas terminais arbitrários (denominados \textit{peers} ou pares) comunicam-se diretamente entre si, atuando simultaneamente como clientes (quando solicitam um serviço) e servidores (quando fornecem um serviço)~\cite{kurose}. A principal vantagem desse modelo é a sua autoescalabilidade (\textit{self-scalability}): cada novo par adicionado à rede introduz tanto novas demandas de tráfego quanto novos recursos de processamento e largura de banda, aliviando a carga agregada do sistema~\cite{kurose}. Além disso, a descentralização confere maior resiliência a falhas isoladas e adequação ao dinamismo decorrente da entrada e saída frequente e inesperada de nós na rede~\cite{pyp2p}.
+
+Este trabalho é centrado no paradigma P2P. Entretanto, a arquitetura de descoberta e registro dos Peers é baseada em um servidor Rendezvous centralizado, que já foi implementado pelo professor. Desse modo, a parte a ser implementada é a infraestrutura de mensagens, difusão e gerenciamento do chat, que opera sob modelo P2P, com conexões TCP diretas, porém sem mecanismos de relay ou intermediários de transporte na camada de aplicação~\cite{pyp2p}.
+
+\subsection{Protocolos da Camada de Aplicação}
+
+A camada de aplicação é o local onde residem os programas e softwares que utilizam a rede para comunicação entre sistemas finais. Um protocolo de camada de aplicação define as regras de como esses processos trocam mensagens entre si~\cite{kurose}. Segundo a literatura clássica, um protocolo de aplicação deve especificar rigidamente:
+\begin{itemize}
+    \item \textbf{Tipos de mensagens}: se são mensagens de requisição, resposta, controle ou sinalização~\cite{kurose}.
+    \item \textbf{Sintaxe}: os campos contidos na mensagem e como eles são estruturados e delimitados~\cite{kurose}.
+    \item \textbf{Semântica}: o significado e a interpretação de cada campo de informação enviado~\cite{kurose}.
+    \item \textbf{Regras de processamento}: as ações que determinam quando e como um processo envia mensagens e responde a eventos recebidos~\cite{kurose}.
+\end{itemize}
+
+No escopo do protocolo projetado para este trabalho, a sintaxe baseia-se em objetos JSON codificados em formato UTF-8 e obrigatoriamente delimitados pelo caractere de quebra de linha (\verb|\n|), contendo um tamanho máximo estrito de 32 KiB por datagrama de aplicação~\cite{pyp2p}. A semântica engloba comandos operacionais essenciais para o ciclo de vida e a coordenação do chat, tais como \texttt{HELLO} e \texttt{HELLO\_OK} para handshakes na aplicação, \texttt{PING} e \texttt{PONG} para monitoramento de vivacidade, além de primitivas de dados como \texttt{SEND}, \texttt{ACK} e \texttt{PUB}~\cite{pyp2p}.
+
+\subsection{Camada de Transporte e Sockets TCP}
+Para que os processos de aplicação distribuídos em máquinas distintas possam trocar dados, eles utilizam a interface fornecida pelo sistema operacional conhecida como \textbf{Socket API}~\cite{kurose}. O socket funciona como a porta de entrada e saída pela qual a aplicação entrega dados para a infraestrutura de rede subjacente e recebe dados vindos dela~\cite{kurose}.
+
+A escolha do protocolo da camada de transporte depende estritamente dos requisitos da aplicação em termos de perda de dados, vazão, temporização e segurança~\cite{kurose}. Para uma aplicação de chat textual e troca de mensagens de controle de estado, a integridade total dos dados é mandatória, tornando o uso de transmissões confiáveis essencial. Por esse motivo, o projeto emprega exclusivamente o protocolo \textbf{TCP} (\textit{Transmission Control Protocol})~\cite{pyp2p}.
+
+O TCP oferece um modelo de serviço de transporte confiável e orientado a conexão, caracterizado por:
+\begin{itemize}
+    \item \textbf{Entrega garantida e ordenada}: assegura que os bytes enviados cheguem ao destino sem perdas, duplicações ou inversão de ordem~\cite{kurose}.
+    \item \textbf{Fluxo contínuo de bytes}: trata os dados como um fluxo contínuo (\textit{byte stream}), exigindo que a aplicação defina delimitadores claros (como o caractere \verb|\n| adotado) para que o receptor consiga reconstruir e interpretar as mensagens JSON individuais sem fragmentação na leitura~\cite{pyp2p}.
+    \item \textbf{Orientação a conexão}: requer um procedimento inicial de estabelecimento de canal físico/lógico (\textit{three-way handshake}) a nível de transporte antes do início do fluxo de dados da aplicação~\cite{kurose}.
+\end{itemize}
+
+Na programação de sockets TCP em arquiteturas P2P, cada par deve implementar concorrência estruturada (tipicamente por meio de múltiplas \textit{threads}). Isso ocorre porque cada nó precisa atuar simultaneamente como um servidor TCP passivo — criando um socket de escuta (\textit{listening socket}), associando-o a uma porta local via \texttt{bind}, colocando-o em modo de escuta com \texttt{listen} e aguardando conexões por meio de \texttt{accept} — e como um cliente TCP ativo, iniciando sockets de conexão direta via \texttt{connect} para interagir com portas remotas de outros nós descobertos~\cite{kurose}.
+
+
+\section{Arquitetura e Implementação}\label{sec:Arq}
+% Apresente a arquitetura da sua solução e os protocolos implementados.
+
+\subsection{Visão Geral do Sistema e Módulos}
+% Apresente a arquitetura da sua solução.
+A solução foi estruturada de forma modular, com uma clara separação de responsabilidades entre os diversos subsistemas que compõem o cliente. O componente central é a classe \texttt{P2PClient} (no módulo \texttt{p2p\_client.py}), que atua como \textit{orquestrador}: ela instancia cada subsistema, conecta-os por meio de \textit{callbacks} e gerencia o ciclo de vida da aplicação (\texttt{start} e \texttt{stop}). O ponto de entrada \texttt{main.py} é responsável apenas por carregar e validar o arquivo de configuração, inicializar o \textit{logging} e ceder o controle ao laço da interface de linha de comando.
+
+A Tabela~\ref{tab:modulos} apresenta os módulos da aplicação e a responsabilidade única de cada um. Essa decomposição reflete diretamente a separação entre as camadas de aplicação e de transporte discutida na Seção~\ref{sec:fundamentacao}: módulos como \texttt{rendezvous\_connection} e \texttt{peer\_connection} encapsulam a programação de \textit{sockets} TCP, enquanto \texttt{message\_router} e \texttt{keep\_alive} implementam a semântica do protocolo de aplicação.
+
+\begin{table}[h]
+\centering
+\caption{Módulos da aplicação e suas responsabilidades.}
+\label{tab:modulos}
+\begin{tabular}{|l|p{9.5cm}|}
+\hline
+\textbf{Módulo} & \textbf{Responsabilidade} \\
+\hline
+\texttt{main.py} & Ponto de entrada: lê \texttt{--config}, valida as chaves obrigatórias, configura o \textit{logging} e sobe o cliente. \\
+\hline
+\texttt{p2p\_client.py} & Orquestrador (\texttt{P2PClient}): instancia e conecta os subsistemas, executa o laço de descoberta, o despacho de mensagens e a reconexão. \\
+\hline
+\texttt{state.py} & Hub de definições compartilhadas: constantes do protocolo, enumerações (\texttt{MsgType}, \texttt{RdvType}, \texttt{PeerState}) e helpers de (de)serialização (\texttt{encode\_line}/\texttt{decode\_line}). \\
+\hline
+\texttt{rendezvous\_connection.py} & Comunicação com o servidor Rendezvous (REGISTER/DISCOVER/UNREGISTER) e a thread de renovação periódica do TTL. \\
+\hline
+\texttt{peer\_connection.py} & Socket de escuta (\texttt{PeerServer}) e conexões individuais (\texttt{PeerConnection}): handshake HELLO, \textit{framing} por \texttt{\textbackslash n} e leitura/escrita thread-safe. \\
+\hline
+\texttt{message\_router.py} & Mensageria de aplicação: SEND (unicast com ACK), PUB (namespace-cast e broadcast) e o tratamento das mensagens recebidas. \\
+\hline
+\texttt{keep\_alive.py} & Keep-alive: thread que envia PING, casa o PONG por \texttt{msg\_id}, calcula o RTT e marca peers não responsivos como \texttt{STALE}. \\
+\hline
+\texttt{peer\_table.py} & Registro thread-safe dos peers conhecidos: estados, regra de \textit{dedupe} e política de reconexão com backoff exponencial. \\
+\hline
+\texttt{validation.py} & Validação de campos (\texttt{name}/\texttt{namespace} $\leq$ 64, \texttt{port} 1--65535, \texttt{ttl} 1--86400) antes do REGISTER e das mensagens recebidas. \\
+\hline
+\texttt{cli.py} & Interface de linha de comando: traduz os comandos \texttt{/} digitados em chamadas ao \texttt{P2PClient}. \\
+\hline
+\end{tabular}
+\end{table}
+
+Um aspecto central da arquitetura é seu \textbf{modelo de concorrência}. Como discutido na fundamentação, cada peer precisa atuar simultaneamente como servidor e cliente TCP, o que exige múltiplas \textit{threads} executando em paralelo. A aplicação emprega \textit{daemon threads} coordenadas pelo \texttt{P2PClient}: uma thread de \textit{accept} (\texttt{peer-accept}) que aceita conexões de entrada; uma thread leitora por conexão (\texttt{reader-<peer\_id>}), responsável por ler e despachar mensagens daquele \textit{socket}; uma thread de DISCOVER periódico (\texttt{discover}); a thread de keep-alive (\texttt{keepalive}); e a thread de renovação de registro no Rendezvous (\texttt{rdv-renew}).
+
+O acesso ao estado compartilhado é protegido por \textit{locks}: o \texttt{PeerTable.\_lock} serializa todas as operações sobre a tabela de peers, e cada conexão possui um \texttt{\_send\_lock} próprio que impede que PINGs, mensagens e ACKs entrelacem seus bytes no mesmo \textit{socket}. O encerramento ordenado das threads é feito por meio de objetos \texttt{threading.Event} (o sinalizador \texttt{\_stop}): cada laço periódico aguarda em \texttt{\_stop.wait(intervalo)}, padrão que serve tanto como pausa entre iterações quanto como sinal de desligamento imediato e interruptível, evitando espera ativa.
+
+\subsection{Integração com Servidor Rendezvous}
+% Detalhes do registro e descoberta.
+O servidor Rendezvous é o ponto de encontro que viabiliza a descoberta inicial dos peers, sem o qual dois nós atrás de NATs distintos não teriam como localizar um ao outro. Toda comunicação com ele segue o padrão de \textbf{conexão TCP curta}: para cada comando, o cliente abre uma nova conexão, envia uma única linha JSON, lê a resposta e fecha o \textit{socket} imediatamente (método \texttt{\_request} em \texttt{rendezvous\_connection.py}). Esse comportamento é distinto das conexões P2P, que são persistentes. As chamadas respeitam o limite de \textbf{50 requisições por minuto} imposto pelo servidor.
+
+Ao iniciar, o cliente realiza um \textbf{REGISTER}, anunciando seu \texttt{namespace}, \texttt{name}, \texttt{port} e \texttt{ttl}. A resposta informa o IP e a porta \textit{públicos} vistos pelo servidor, que são armazenados para tratamento de NAT:
+
+\begin{lstlisting}[style=terminal]
+--> {"type":"REGISTER","namespace":"CIC","name":"alice","port":4000,"ttl":3600}
+<-- {"status":"OK","ttl":3600,"ip":"45.171.101.167","port":4000}
+\end{lstlisting}
+
+A descoberta de peers é feita pelo \textbf{DISCOVER}, cuja resposta traz a lista de peers registrados no namespace, com seus respectivos endereços e tempo restante de validade do registro (\texttt{expires\_in}):
+
+\begin{lstlisting}[style=terminal]
+--> {"type":"DISCOVER","namespace":"CIC"}
+<-- {"status":"OK","peers":[{"name":"bob","namespace":"CIC",
+     "ip":"45.171.101.167","port":4001,"expires_in":3590}]}
+\end{lstlisting}
+
+Como o registro no servidor expira após o \texttt{ttl}, a thread \texttt{rdv-renew} reenvia o REGISTER periodicamente (a cada $\sim ttl/2$, ou seja, 1800\,s para o \texttt{ttl} padrão de 3600\,s), renovando a validade antes que ela expire. Ao encerrar, o cliente envia um \textbf{UNREGISTER} (\textit{best-effort}) para remover-se da lista do servidor:
+
+\begin{lstlisting}[style=terminal]
+--> {"type":"UNREGISTER","namespace":"CIC","name":"alice","port":4000}
+\end{lstlisting}
+
+Por fim, um detalhe prático de NAT/loopback: ao discar para um peer cujo IP público coincide com o seu próprio (caso típico de dois peers na mesma máquina ou rede), o método \texttt{\_dial\_host} reescreve o destino para \texttt{127.0.0.1}, viabilizando o teste local sem depender de \textit{hairpinning} no NAT.
+
+\subsection{Protocolo de Comunicação P2P (Camada de Aplicação)}
+% Explique o formato padrão (JSON).
+% ATENÇÃO: Inclua os EXEMPLOS DE FUNCIONAMENTO exigidos aqui, mostrando os JSONs trocados.
+O protocolo de aplicação projetado para a comunicação entre peers segue rigorosamente as definições de sintaxe e semântica descritas na Seção~\ref{sec:fundamentacao}. Cada mensagem é um objeto JSON compacto, codificado em UTF-8, transmitido em uma única linha terminada pelo caractere \verb|\n| e com tamanho máximo de 32\,KiB --- limites garantidos pelos helpers \texttt{encode\_line} e \texttt{decode\_line} (módulo \texttt{state.py}), que rejeitam linhas maiores. Todas as mensagens carregam os campos comuns \texttt{type} (o tipo da mensagem) e \texttt{ttl}, este sempre fixo em \texttt{1}, pois não há \textit{relay} nem múltiplos saltos --- o \texttt{ttl} nunca é decrementado ou repassado. Mensagens identificáveis usam um \texttt{msg\_id} (UUID v4) e um \texttt{timestamp} ISO-8601 UTC. A versão do protocolo é \texttt{"1.0"} e as \textit{features} anunciadas são \texttt{["ack","metrics"]}.
+
+\subsubsection{Estabelecimento de Conexão (HELLO / HELLO\_OK)}
+Após estabelecer a conexão TCP, antes de qualquer troca de dados, os peers realizam um handshake na camada de aplicação. O lado que iniciou a conexão (\textit{dialer}) envia um \textbf{HELLO} contendo sua identidade, versão e \textit{features}; o lado que aceitou responde com um \textbf{HELLO\_OK} simétrico, anunciando sua própria identidade. Concluído o handshake, ambos registram o \texttt{peer\_id} do outro e marcam a conexão como \texttt{ACTIVE}, iniciando então a thread de leitura persistente.
+
+\begin{lstlisting}[style=terminal]
+--> {"type":"HELLO","peer_id":"alice@CIC","version":"1.0","features":["ack","metrics"],"ttl":1}
+<-- {"type":"HELLO_OK","peer_id":"bob@CIC","version":"1.0","features":["ack","metrics"],"ttl":1}
+\end{lstlisting}
+
+\subsubsection{Manutenção de Sessão (PING / PONG e Cálculo de RTT)}
+Para verificar a vivacidade das conexões e medir a latência, a thread de keep-alive envia periodicamente (a cada \texttt{ping\_interval} segundos) uma mensagem \textbf{PING} a cada peer conectado. O receptor responde imediatamente com um \textbf{PONG} que ecoa o mesmo \texttt{msg\_id}. Note que PING e PONG não carregam \texttt{src}/\texttt{dst}, pois são trocados ponto a ponto em uma conexão já estabelecida.
+
+\begin{lstlisting}[style=terminal]
+--> {"type":"PING","msg_id":"3f2a...","timestamp":"2026-06-28T12:08:21Z","ttl":1}
+<-- {"type":"PONG","msg_id":"3f2a...","timestamp":"2026-06-28T12:08:21Z","ttl":1}
+\end{lstlisting}
+
+O cálculo do RTT baseia-se no casamento por \texttt{msg\_id}: ao enviar um PING, o cliente armazena o instante de envio (via \texttt{time.monotonic()}); ao receber o PONG correspondente, calcula $RTT = (t_{agora} - t_{envio}) \times 1000$ em milissegundos. Cada peer mantém um histórico das últimas 20 amostras, usado para reportar o RTT médio no comando \texttt{/rtt}. Se um peer não responde a um PING dentro de $2 \times \texttt{ping\_interval}$ segundos, ele é marcado como \texttt{STALE} e sua conexão é forçadamente fechada, disparando o mecanismo de reconexão (Seção~\ref{subsubsec_estado}).
+
+\subsubsection{Roteamento de Mensagens (SEND / ACK e PUB)}
+A troca de mensagens da aplicação ocorre por duas primitivas. O \textbf{SEND} é uma mensagem \textit{unicast}, endereçada a um \texttt{peer\_id} específico, com o campo \texttt{require\_ack} igual a \texttt{true}. Ao recebê-la, o destinatário responde com um \textbf{ACK} que ecoa o \texttt{msg\_id} original. Se nenhum ACK chegar em 5 segundos (\texttt{ack\_timeout}), o emissor registra um aviso de \textit{timeout}.
+
+\begin{lstlisting}[style=terminal]
+--> {"type":"SEND","msg_id":"69a5...","src":"alice@CIC","dst":"bob@CIC","payload":"oi bob, tudo certo?","require_ack":true,"ttl":1}
+<-- {"type":"ACK","msg_id":"69a5...","timestamp":"2026-06-28T12:08:23Z","ttl":1}
+\end{lstlisting}
+
+O \textbf{PUB} é uma mensagem de difusão, com \texttt{require\_ack} igual a \texttt{false}. O campo \texttt{dst} determina o escopo: \texttt{"\#namespace"} para um \textit{namespace-cast} (enviado a todos os peers conectados daquele namespace) ou \texttt{"*"} para um \textit{broadcast} global (todos os peers conectados).
+
+\begin{lstlisting}[style=terminal]
+{"type":"PUB","msg_id":"a1b2...","src":"alice@CIC","dst":"#CIC","payload":"ola turma do CIC","require_ack":false,"ttl":1}
+{"type":"PUB","msg_id":"c3d4...","src":"alice@CIC","dst":"*","payload":"mensagem broadcast","require_ack":false,"ttl":1}
+\end{lstlisting}
+
+\subsubsection{Encerramento Limpo (BYE / BYE\_OK)}
+Para uma desconexão graciosa, o peer que está saindo envia um \textbf{BYE} (com um campo \texttt{reason}) a cada conexão ativa; o receptor responde com \textbf{BYE\_OK} e fecha a conexão. Esse encerramento intencional leva o estado do peer a \texttt{CLOSED}, o que \textit{suprime} a tentativa de reconexão automática --- diferenciando uma saída deliberada de uma queda inesperada.
+
+\begin{lstlisting}[style=terminal]
+--> {"type":"BYE","msg_id":"e5f6...","src":"alice@CIC","dst":"bob@CIC","reason":"shutdown","ttl":1}
+<-- {"type":"BYE_OK","msg_id":"a7b8...","src":"bob@CIC","dst":"alice@CIC","ttl":1}
+\end{lstlisting}
+
+\subsection{Gerenciamento de Estado e Tolerância a Falhas}
+\label{subsubsec_estado}
+% Tabela de peers, timeouts e reconexão.
+O conhecimento que o cliente tem sobre a rede é centralizado na classe \texttt{PeerTable} (\texttt{peer\_table.py}), um registro thread-safe que associa cada \texttt{peer\_id} a uma entrada (\texttt{PeerEntry}) contendo seu endereço, sua conexão ativa, o estado atual e os contadores de reconexão. O ciclo de vida de cada peer é modelado pela enumeração \texttt{PeerState}, descrita na Tabela~\ref{tab:estados}.
+
+\begin{table}[h]
+\centering
+\caption{Estados de um peer (\texttt{PeerState}).}
+\label{tab:estados}
+\begin{tabular}{|l|p{10cm}|}
+\hline
+\textbf{Estado} & \textbf{Significado} \\
+\hline
+\texttt{KNOWN} & Peer descoberto via DISCOVER, ainda sem conexão estabelecida. \\
+\hline
+\texttt{CONNECTING} & Tentativa de conexão (dial) em andamento. \\
+\hline
+\texttt{ACTIVE} & Handshake concluído; conexão viva e operacional. \\
+\hline
+\texttt{STALE} & Peer não respondeu a um PING ou a conexão caiu; candidato a reconexão. \\
+\hline
+\texttt{FAILED} & Esgotou o limite de \texttt{max\_reconnect\_attempts}; não há mais tentativas. \\
+\hline
+\texttt{CLOSED} & Conexão encerrada intencionalmente via BYE/BYE\_OK; sem reconexão. \\
+\hline
+\end{tabular}
+\end{table}
+
+\textbf{Descoberta incremental.} A cada DISCOVER, o método \texttt{merge\_discovered} compara a lista recebida com a tabela atual e retorna \textit{apenas} os peers novos, ignorando o próprio cliente e atualizando o endereço dos já conhecidos sem alterar seu estado. Isso permite distinguir peers novos de conhecidos e iniciar conexões apenas para os primeiros.
+
+\textbf{Regra de \textit{dedupe}.} Para evitar que dois peers abram conexões simultâneas um para o outro (resultando em conexões duplicadas), a regra \texttt{should\_dial} adota um critério de desempate determinístico: apenas o peer cujo \texttt{peer\_id} é lexicograficamente \textit{menor} efetua o \textit{dial}; o outro aguarda a conexão de entrada. Esse comportamento foi observado nos testes (Seção~\ref{sec:testes}): \texttt{alice@CIC} disca para \texttt{bob@CIC}, enquanto \texttt{bob} apenas aceita a conexão \textit{inbound}.
+
+\textbf{Reconexão com backoff exponencial.} Quando uma conexão cai inesperadamente (queda do peer ou \textit{timeout} de PING), o estado vai a \texttt{STALE} e uma reconexão é agendada via \texttt{threading.Timer}. O atraso entre tentativas cresce exponencialmente --- 1\,s, 2\,s, 4\,s, 8\,s, \ldots --- até um teto de 60\,s, evitando sobrecarregar a rede com tentativas. Após \texttt{max\_reconnect\_attempts} falhas consecutivas, o peer é marcado como \texttt{FAILED}. Em uma reconexão bem-sucedida, os contadores são reiniciados. O comando \texttt{/reconnect} permite forçar manualmente uma reconciliação, zerando o backoff e rediscando os peers pendentes.
+
+\section{Metodologia de Testes e Resultados}
+\label{sec:testes}
+% Mostre mais exemplos de funcionamento em uso real (prints do terminal).
+A validação do cliente foi conduzida de forma manual, executando-se instâncias reais conectadas ao servidor Rendezvous público \texttt{pyp2p.mfcaetano.cc:8080}. Para os testes utilizaram-se dois peers no mesmo namespace (\texttt{alice@CIC} e \texttt{bob@CIC}) em uma mesma máquina, com portas de escuta distintas (4000 e 4001). Os \textit{logs} reproduzidos a seguir são saídas reais do terminal, e cobrem os seis cenários mínimos exigidos. (Observa-se nos logs a presença de um terceiro peer real, \texttt{vm\_giga@CIC}, ativo no servidor de testes durante os experimentos.)
+
+\subsection{Registro, Descoberta e Conexão Direta}
+Ao iniciar, \texttt{alice} registra-se no Rendezvous, executa um DISCOVER e conecta-se automaticamente aos peers novos descobertos, completando o handshake HELLO/HELLO\_OK. Observa-se o tratamento de NAT/loopback: o peer \texttt{bob}, descoberto com IP público idêntico ao de \texttt{alice}, é discado em \texttt{127.0.0.1}.
+
+\begin{lstlisting}[style=terminal]
+INFO [Rendezvous] REGISTER OK: alice@CIC -> 189.6.7.93:4000 (ttl=3600s)
+INFO [Rendezvous] DISCOVER OK: 3 peer(s) no namespace CIC
+INFO [PeerTable] Novo peer descoberto: bob@CIC (189.6.7.93:4001)
+INFO [Client] Conectando a bob@CIC (127.0.0.1:4001)...
+INFO [PeerConn] Handshake OK (outbound) com bob@CIC
+INFO [Client] Conectado a bob@CIC
+\end{lstlisting}
+
+A regra de \textit{dedupe} é evidenciada na perspectiva de \texttt{bob}: por ter \texttt{peer\_id} lexicograficamente maior, ele \textit{não} disca para \texttt{alice}, apenas aceita a conexão \textit{inbound}.
+
+\begin{lstlisting}[style=terminal]
+INFO [PeerConn] Conexão inbound de 127.0.0.1:34672
+INFO [PeerConn] Handshake OK (inbound) com alice@CIC
+INFO [Client] Conexão inbound estabelecida com alice@CIC
+\end{lstlisting}
+
+\subsection{Keep-alive e Cálculo de RTT}
+A thread de keep-alive emite PINGs periódicos e reporta o RTT médio agregado. O comando \texttt{/rtt} consulta o RTT médio por peer.
+
+\begin{lstlisting}[style=terminal]
+INFO [KeepAlive] Sent 2 PINGs | Average RTT = n/a
+INFO [KeepAlive] Sent 2 PINGs | Average RTT = 1.9 ms
+> /rtt
+  vm_giga@CIC: 3.8 ms
+  bob@CIC: 0.2 ms
+\end{lstlisting}
+
+\subsection{Mensageria: SEND/ACK e PUB}
+O comando \texttt{/msg} dispara um SEND unicast, confirmado por um ACK; \texttt{/pub} envia difusões por namespace e broadcast. Lado emissor (\texttt{alice}):
+
+\begin{lstlisting}[style=terminal]
+> /msg bob@CIC oi bob, tudo certo?
+INFO [Router] SEND bob@CIC: oi bob, tudo certo?
+INFO [Router] ACK recebido para msg_id=69a59302-340a-4d6e-9acf-63bf0dc4d42a
+> /pub #CIC ola turma do CIC
+INFO [Router] PUB #CIC para 2 peer(s): ola turma do CIC
+> /pub * mensagem broadcast
+INFO [Router] PUB * para 2 peer(s): mensagem broadcast
+\end{lstlisting}
+
+Lado receptor (\texttt{bob}), que responde ao SEND com ACK e exibe as mensagens recebidas:
+
+\begin{lstlisting}[style=terminal]
+INFO [Router] SEND recebido de alice@CIC: oi bob, tudo certo?
+INFO [Router] PUB recebido de alice@CIC (#CIC): ola turma do CIC
+INFO [Router] PUB recebido de alice@CIC (*): mensagem broadcast
+
+[alice@CIC] oi bob, tudo certo?
+[alice@CIC -> #CIC] ola turma do CIC
+[alice@CIC -> *] mensagem broadcast
+\end{lstlisting}
+
+\subsection{Reconexão com Backoff Exponencial}
+Para validar a tolerância a falhas, o processo de \texttt{bob} foi encerrado abruptamente (sinal \texttt{SIGKILL}, sem BYE). A conexão cai, o peer é marcado como \texttt{STALE} e as tentativas de reconexão seguem o backoff exponencial (1\,s, 2\,s, 4\,s, 8\,s, 16\,s). Quando \texttt{bob} retorna, a conexão é restabelecida automaticamente.
+
+\begin{lstlisting}[style=terminal]
+INFO [PeerConn] Conexão com bob@CIC fechada: reader exit
+INFO [Client] Conexão com bob@CIC caiu; estado -> STALE
+INFO [Client] Reagendando conexão com bob@CIC em 1.0s
+WARNING [Client] Falha ao conectar a bob@CIC: [Errno 111] Connection refused
+INFO [Client] Reagendando conexão com bob@CIC em 2.0s
+WARNING [Client] Falha ao conectar a bob@CIC: [Errno 111] Connection refused
+INFO [Client] Reagendando conexão com bob@CIC em 4.0s
+...
+INFO [Client] Reagendando conexão com bob@CIC em 16.0s
+INFO [Client] Conectando a bob@CIC (127.0.0.1:4001)...
+INFO [PeerConn] Handshake OK (outbound) com bob@CIC
+INFO [Client] Conectado a bob@CIC
+\end{lstlisting}
+
+\subsection{Encerramento Limpo}
+Ao receber \texttt{/quit}, o cliente envia BYE a cada conexão, aguarda os BYE\_OK e executa o UNREGISTER no Rendezvous antes de fechar os \textit{sockets} e as threads.
+
+\begin{lstlisting}[style=terminal]
+> /quit
+INFO [Client] Encerrando cliente alice@CIC...
+INFO [Rendezvous] Renovação de TTL encerrada
+INFO [Client] BYE_OK recebido de bob@CIC
+INFO [PeerConn] Conexão com bob@CIC fechada: bye_ok
+INFO [Rendezvous] UNREGISTER OK: alice@CIC
+INFO [Client] Cliente alice@CIC encerrado
+\end{lstlisting}
+
+No peer remanescente, observa-se a recepção do BYE e o fechamento correspondente:
+
+\begin{lstlisting}[style=terminal]
+INFO [Client] BYE recebido de alice@CIC: shutdown
+INFO [PeerConn] Conexão com alice@CIC fechada: bye
+\end{lstlisting}
+
+\subsection{Interface de Linha de Comando}
+Os comandos da CLI foram exercitados ao longo dos cenários acima. O comando \texttt{/peers} lista os peers descobertos com seus endereços e validade de registro; \texttt{/conn} lista as conexões ativas, distinguindo \textit{inbound} de \textit{outbound}.
+
+\begin{lstlisting}[style=terminal]
+> /peers
+3 peer(s):
+  vm_giga@CIC  45.171.101.167:8081  (expira em 4537s)
+  bob@CIC  189.6.7.93:4001  (expira em 3579s)
+  alice@CIC  189.6.7.93:4000  (expira em 3585s)
+> /conn
+2 conexao(oes) ativa(s):
+  vm_giga@CIC  [outbound]
+  bob@CIC  [outbound]
+\end{lstlisting}
+
+\subsection{Conectividade entre Redes Distintas: Travessia de NAT via Rede \textit{Overlay}}
+\label{subsec:nat}
+Os cenários anteriores foram validados com os dois peers em uma mesma máquina. Para exercitar o sistema em condição realista, conduziu-se um teste complementar com dois peers em \textbf{máquinas e redes residenciais distintas}, cada qual atrás de seu próprio roteador NAT. Esse cenário expôs uma limitação fundamental da comunicação P2P na Internet, cujo diagnóstico e solução merecem registro.
+
+\textbf{Sintoma observado.} Ambos os peers \textit{enxergavam} um ao outro no comando \texttt{/peers} --- isto é, a descoberta via Rendezvous funcionava normalmente ---, mas toda tentativa de \texttt{/msg} falhava com o aviso ``não conectado'': a conexão TCP direta entre eles jamais se estabelecia.
+
+\textbf{Causa: o NAT.} O \textit{Network Address Translation} permite que múltiplos dispositivos de uma rede doméstica compartilhem um único endereço IP público~\cite{kurose}. O roteador mantém uma tabela de tradução cujas entradas são criadas \textit{apenas} quando um host interno inicia uma conexão de \textbf{saída}. As mensagens de DISCOVER funcionam justamente por serem conexões curtas de saída, dirigidas ao servidor. Já a conexão P2P exige que um dos peers \textbf{aceite} uma conexão de \textbf{entrada não solicitada} em sua porta de escuta; ao chegar ao roteador do destinatário, esse pacote inicial (TCP SYN) não encontra entrada correspondente na tabela de tradução e é \textit{descartado}. Como, pela regra de \textit{dedupe}, sempre há um lado que apenas aceita conexões, a comunicação direta entre dois peers atrás de NATs distintos torna-se inviável sem mecanismos adicionais. Cabe destacar que o servidor Rendezvous resolve apenas a \textit{descoberta} (a localização mútua dos peers), e não a \textit{conectividade} direta entre eles --- dois problemas distintos.
+
+\textbf{Travessia de NAT em aplicações reais.} A solução desse problema é tipicamente obtida por técnicas de \textit{hole punching} sobre UDP, coordenadas por servidores STUN, com \textit{relay} (TURN) como alternativa quando o \textit{hole punching} falha --- conjunto consolidado no \textit{framework} ICE. Tais técnicas, contudo, estão fora do escopo desta aplicação, que opera exclusivamente sobre TCP e que, por especificação, não admite \textit{relay} na camada de aplicação, com \texttt{ttl} fixo em 1~\cite{pyp2p}.
+
+\textbf{Solução adotada: rede \textit{overlay}.} Optou-se, portanto, por resolver a travessia de NAT na \textbf{camada de rede}, de forma transparente à aplicação, por meio de uma \textbf{rede \textit{overlay}} --- uma VPN ponto a ponto que constrói uma LAN virtual sobre a Internet. Utilizou-se a ferramenta Hamachi, que opera em quatro etapas: (i) cria em cada máquina uma interface de rede virtual (\texttt{ham0}) com um endereço IP roteável na faixa \texttt{25.x.x.x}; (ii) quando a aplicação envia um pacote a esse endereço virtual, o software o encapsula (\textit{tunneling}) dentro de um datagrama UDP cifrado, endereçado ao IP público real do destino; (iii) para abrir o caminho entre os roteadores, ambos os clientes mantêm conexões de \textit{saída} a um \textbf{servidor mediador} que, à semelhança de um servidor STUN, observa o endereço público de cada par e coordena o \textit{hole punching} entre eles; (iv) caso a conexão direta não se estabeleça, o tráfego é encaminhado (\textit{relayed}) pelos servidores da ferramenta. O ponto essencial é que toda essa travessia ocorre \textit{abaixo} da aplicação: do ponto de vista do cliente P2P, os dois peers passam a estar em uma mesma rede local, e o código TCP --- \textbf{sem qualquer alteração} --- volta a estabelecer conexões diretas.
+
+\textbf{Resultado.} Para o teste, bastou ajustar o campo \texttt{rendezvous\_host} dos dois clientes para o endereço \textit{overlay} da máquina que hospeda o Rendezvous, garantindo que o servidor registrasse os endereços da rede virtual (\texttt{25.x.x.x}), e não os IPs públicos inalcançáveis. Como os endereços \textit{overlay} dos dois peers são distintos, a heurística de \textit{loopback} do método \texttt{\_dial\_host} não é acionada e o \textit{dialer} disca diretamente o endereço virtual do par remoto. Os logs evidenciam a conexão estabelecida sobre a rede virtual:
+
+\begin{lstlisting}[style=terminal]
+INFO [Rendezvous] REGISTER OK: alice@CIC -> 25.30.252.207:4000 (ttl=3600s)
+INFO [Rendezvous] DISCOVER OK: 2 peer(s) no namespace CIC
+INFO [PeerTable] Novo peer descoberto: bob@CIC (25.42.118.50:4001)
+INFO [Client] Conectando a bob@CIC (25.42.118.50:4001)...
+INFO [PeerConn] Handshake OK (outbound) com bob@CIC
+INFO [Client] Conectado a bob@CIC
+\end{lstlisting}
+
+Com isso, validou-se a troca de mensagens entre peers em redes fisicamente distintas, confirmando que o cliente é funcional em um cenário realista de Internet. Ressalta-se que a limitação encontrada é de \textit{conectividade de rede} (NAT), e não da aplicação: provida a alcançabilidade entre os pares --- aqui, pela rede \textit{overlay} ---, o protocolo implementado opera corretamente.
+
+\subsection{Síntese dos Resultados}
+A Tabela~\ref{tab:resultados} resume os seis cenários de teste e seus resultados. Todos os critérios funcionais previstos na especificação foram exercitados com sucesso em execução real.
+
+\begin{table}[h]
+\centering
+\caption{Resumo dos cenários de teste.}
+\label{tab:resultados}
+\begin{tabular}{|l|p{7.5cm}|c|}
+\hline
+\textbf{Cenário} & \textbf{Verificação} & \textbf{Resultado} \\
+\hline
+Conexão direta & REGISTER, DISCOVER, handshake HELLO/HELLO\_OK & OK \\
+\hline
+Descoberta automática & DISCOVER periódico e conexão a peers novos & OK \\
+\hline
+Keep-alive / RTT & PING/PONG e cálculo de RTT médio & OK \\
+\hline
+Mensageria & SEND/ACK e PUB (namespace e broadcast) & OK \\
+\hline
+Reconexão & STALE + backoff exponencial + reconexão & OK \\
+\hline
+Encerramento & BYE/BYE\_OK e UNREGISTER & OK \\
+\hline
+\end{tabular}
+\end{table}
+
+\section{Conclusão}
+% Resuma o que foi aprendido no projeto e valide se todos os objetivos foram alcançados.
+Este trabalho concretizou a implementação de um cliente de chat P2P funcional, atendendo aos objetivos propostos. O sistema registra-se e descobre peers por meio do servidor Rendezvous, estabelece e mantém conexões TCP diretas e persistentes, e troca mensagens em tempo real, tudo validado em execução real conectada ao servidor de testes da disciplina. Os seis cenários mínimos --- conexão direta, descoberta automática, keep-alive com cálculo de RTT, mensageria (SEND/ACK e PUB), reconexão com backoff exponencial e encerramento limpo --- foram exercitados com sucesso, conforme os \textit{logs} apresentados na Seção~\ref{sec:testes}.
+
+Do ponto de vista do aprendizado, o projeto consolidou de forma prática os conceitos teóricos de redes de computadores discutidos por Kurose e Ross~\cite{kurose}. A necessidade de cada peer atuar simultaneamente como cliente e servidor TCP tornou tangível o paradigma P2P e a programação de \textit{sockets}; a definição do protocolo de aplicação --- com seus tipos de mensagem, sintaxe JSON e semântica próprios --- materializou o que significa projetar um protocolo de camada de aplicação; e o tratamento do TCP como um fluxo contínuo de bytes evidenciou a importância do \textit{framing} explícito (delimitação por \verb|\n|) para a correta reconstrução das mensagens.
+
+As principais dificuldades enfrentadas foram inerentes à natureza concorrente e distribuída do sistema. A coordenação de múltiplas \textit{threads} exigiu cuidado com a segurança de acesso ao estado compartilhado, resolvido com o uso disciplinado de \textit{locks} e do padrão \texttt{threading.Event} para o encerramento ordenado. O ambiente real de rede, com peers atrás de NAT, motivou o tratamento de \textit{loopback} para viabilizar testes locais. Por fim, a distinção entre quedas inesperadas e saídas intencionais --- essencial para acionar a reconexão apenas quando apropriado --- exigiu uma modelagem explícita do ciclo de vida de cada peer.
+
+Como evoluções futuras, o sistema poderia incorporar a travessia automática de NAT na própria aplicação --- por exemplo, via UPnP/NAT-PMP ou \textit{hole punching} sobre UDP coordenado por um servidor STUN ---, eliminando a dependência de redes \textit{overlay} externas (Seção~\ref{subsec:nat}); criptografia das mensagens para garantir confidencialidade; persistência do histórico de conversas; e uma interface gráfica em substituição à CLI. Conclui-se que os objetivos do trabalho foram plenamente alcançados, resultando em uma aplicação modular, robusta e fiel à especificação do protocolo.
+
+\begin{thebibliography}{9}
+\bibitem{kurose} 
+KUROSE, James F.; ROSS, Keith W. 
+\textit{Redes de Computadores e a Internet: Uma Abordagem Top-Down}. 
+8ª ed. Pearson, 2021.
+
+\bibitem{pyp2p}
+CAETANO, M. F.
+\textit{Documentação do Protocolo Rendezvous}. 
+Disponível em: \url{https://github.com/mfcaetano/pyp2p-rdv}. Acesso em: \today.
+\end{thebibliography}
+
+\end{document}
