@@ -47,6 +47,9 @@ class MessageRouter:
         Retorna o msg_id gerado, ou None se o peer não estiver conectado.
         Agenda um timer de timeout de ACK.
         """
+
+        LOG.info("Enviando mensagem para %s: %s", dst, payload)
+
         entry = self.peer_table.get(dst)
         if entry is None or entry.conn is None:
             LOG.warning("SEND falhou: %s não está conectado", dst)

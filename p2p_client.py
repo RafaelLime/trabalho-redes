@@ -131,16 +131,27 @@ class P2PClient:
         """
         peers = self.rendezvous.discover(namespace)
         new_entries = self.peer_table.merge_discovered(peers)
-        for entry in new_entries:
-            self.connect_to(entry)
+        LOG.info("Executando discover...")
+
+        def dial_new_peers() -> None:
+
+            for entry in new_entries:
+                self.connect_to(entry)
+        
+        if new_entries:
+            t = threading.Thread(target=dial_new_peers, name="dialer", daemon=True)
+            t.start()
+        
         return peers
 
     def connect_to(self, entry: PeerEntry) -> None:
         """Disca a um peer (outbound) e executa o handshake HELLO."""
+        LOG.info("Iniciando conexão com %s...", entry.peer_id)
         if not self.peer_table.should_dial(entry.peer_id):
-            LOG.debug("Dedupe: não discando para %s", entry.peer_id)
+            LOG.info("Dedupe: não discando para %s", entry.peer_id)
             return
         self.peer_table.set_state(entry.peer_id, PeerState.CONNECTING)
+        LOG.info("State: CONNECTING")
         dial_ip = self._dial_host(entry.ip)
         LOG.info("Conectando a %s (%s:%d)...", entry.peer_id, dial_ip, entry.port)
         try:

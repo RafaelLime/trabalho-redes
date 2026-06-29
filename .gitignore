@@ -38,3 +38,7 @@ htmlcov/
 
 # macOS
 .DS_Store
+
+# arquivo Config
+config.json
+/commands/
