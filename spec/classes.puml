@@ -1,0 +1,272 @@
+@startuml ClassDiagram
+
+skinparam TitleFontSize 50
+skinparam TitleFontName Arial
+skinparam TitleFontStyle bold
+
+title Diagrama de Classes
+
+skinparam shadowing true
+
+file StatePy as "state.py" {
+
+    enum MsgType {
+        HELLO
+        HELLO_OK
+        PING
+        PONG
+        SEND
+        ACK
+        PUB
+        BYE
+        BYE_OK
+    }
+
+    enum RdvType {
+        REGISTER
+        DISCOVER
+        UNREGISTER
+    }
+
+    enum PeerState {
+        KNOWN
+        CONNECTING
+        ACTIVE
+        STALE
+        FAILED
+        CLOSED
+    }
+
+    enum Direction {
+        INBOUND
+        OUTBOUND
+    }
+
+    class " " as makePeerId <state><<(M, LightBlue) module>>{
+        StateHelper para formatação do peer ID
+        + make_peer_id(name: str, namespace: str): str
+    }
+
+    class " " as splitPeerId <state><<(M, LightBlue) module>>{
+        StateHelper para separação do
+        peer ID em nome e namespace.
+        + split_peer_id(peer_id: str): tuple
+    }
+
+    class " " as newMsgId <state><<(M, LightBlue) module>>{
+        StateHelper para geração
+        de identificador de mensagem.
+        + new_msg_id(): str
+    }
+
+    class " " as utcTimestamp <state><<(M, LightBlue) module>>{
+        StateHelper para obtenção do
+        timestamp atual.
+        + utc_timestamp(): str
+    }
+
+    class " " as encodeLine <state><<(M, LightBlue) module>>{
+        StateHelper para serialização de mensagens
+        em JSON UTF-8 terminadas em \\n.
+        + encode_line(msg: dict): bytes
+    }
+    
+    class " " as decodeLine <state><<(M, LightBlue) module>>{
+        StateHelper para desserialização
+        de mensagens.
+        + decode_line(line: bytes): dict
+    }
+    
+}
+
+file RendezvousConnectionPy as "rendezvous_connection.py" {
+
+    exception RendezvousError {
+        Erro retornado pelo servidor Rendezvous (status != OK).
+        --
+    }
+
+    class RendezvousConnection {
+        + host: str
+        + port: int
+        + public_ip: Optional[str]
+        + public_port: Optional[int]
+        --
+        + register(namespace, name, port, ttl): dict
+        + discover(namespace): list
+        + unregister(namespace, name, port)
+        + start_renew(namespace, name, port, ttl)
+        + stop_renew()
+        - _request(payload: dict): dict
+        - _check_response(resp: dict): dict
+    }
+
+    class "LOG" as LogRendezvous <logging.getLogger("Rendezvous")><< (O, orchid) Logger Object>>{
+        Classe de definição do Logger, para
+        debug e informações em tempo de
+        execução.
+
+        ..Métodos..
+
+        + error(msg: object, *args, **kwargs)
+        * Emite mensagem de erro no
+        logging, travando o programa
+        principal
+
+        + setLevel(level : int|str)
+        * Configura o nível do Logger atual
+    }
+    
+    RendezvousConnection "1"<-down-"many" RendezvousError : > aciona quando erro
+    RendezvousConnection <.left. LogRendezvous : > registra logs
+}
+
+file P2PClientPy as "p2p_client.py" {
+    class P2PClient {
+        + config: dict
+        + name: str
+        + namespace: str
+        + listen_port: int
+        + ttl: int
+        + peer_id: str
+        + rendezvous: RendezvousConnection
+        + peer_table: PeerTable
+        + router: MessageRouter
+        + keep_alive: KeepAlive
+        + server: PeerServer
+        --
+        + start()
+        + stop()
+        + discover_now(namespace): list
+        + connect_to(entry)
+        + reconnect()
+        - _discover_loop()
+        - _dial_host(peer_ip: str): str
+        - _schedule_reconnect(peer_id: str)
+        - _reconnect_peer(peer_id: str)
+        - _on_accept(sock, addr)
+        - _on_message(conn, msg)
+        - _handle_bye(conn, msg)
+        - _on_conn_close(conn)
+    }
+
+    class "LOG" as LogP2P <logging.getLogger("Client")><< (O, orchid) Logger Object>>{
+        Classe de definição do Logger, para
+        debug e informações em tempo de
+        execução.
+
+        ..Métodos..
+
+        + error(msg: object, *args, **kwargs)
+        * Emite mensagem de erro no
+        logging, travando o programa
+        principal
+
+        + setLevel(level : int|str)
+        * Configura o nível do Logger atual
+    }
+
+    P2PClient <.right. LogP2P : > registra logs
+}
+
+file CLIPy as "cli.py" {
+
+    class CLI {
+        Classe para criação da interface de linha de comando.
+
+        ..Atributos..
+
+        + client: P2PClient
+        - _running: bool
+
+        ..Métodos..
+
+        + run()
+        * Loop principal: lê linhas do stdin e despacha
+        comandos.
+
+        + dispatch(line: str)
+        * Interpreta uma linha de comando e chama o handler
+        correspondente.
+
+        + cmd_peers(arg)
+        */peers - lista peers disponíveis.
+
+        + cmd_msg(peer_id, message)
+        */msg - envia mensagem direta (SEND) a um peer_id.
+
+        + cmd_pub(scope, message)
+        */pub - publica para namespace (#ns) ou broadcast (*).
+
+        + cmd_conn()
+        */conn - lista conexões ativas (inbound/outbound).
+        
+        + cmd_rtt()
+        */rtt - exibe RTT médio por peer.
+        
+        + cmd_reconnect()
+        */reconnect - força reconexão com todos os peers.
+        
+        + cmd_log(level)
+        */log - altera nível de log (debug/info/warn/error).
+        
+        + cmd_quit()
+        */quit - encerra a aplicação.
+
+    }
+
+    class "LOG" as LogCli <logging.getLogger("CLI")><< (O, orchid) Logger Object>>{
+        Classe de definição do Logger, para
+        debug e informações em tempo de
+        execução.
+
+        ..Métodos..
+
+        + error(msg: object, *args, **kwargs)
+        * Emite mensagem de erro no
+        logging, travando o programa
+        principal
+
+        + setLevel(level : int|str)
+        * Configura o nível do Logger atual
+    }
+
+    class " " as HelpCli <constant> << (M, LightBlue) module>> {
+         _HELP =
+"""
+<font:monoespaced>Comandos disponíveis:</font>
+    <font:monoespaced>  /peers [* | #<namespace>]</font>               <font:monoespaced>descobrir e listar peers</font>
+    <font:monoespaced>  /msg <peer_id> <mensagem></font>         <font:monoespaced>mensagem direta (SEND)</font>
+    <font:monoespaced>  /pub * <mensagem></font>                        <font:monoespaced>broadcast global</font>
+    <font:monoespaced>  /pub #<namespace> <mensagem></font> <font:monoespaced>mensagem para um namespace</font>
+    <font:monoespaced>  /conn</font>                                                <font:monoespaced>conexões ativas (inbound|outbound)</font>
+    <font:monoespaced>  /rtt</font>                                                     <font:monoespaced>RTT médio por peer</font>
+    <font:monoespaced>  /reconnect</font>                                        <font:monoespaced>forçar reconciliação de peers</font>
+    <font:monoespaced>  /log <Nível></font>                                      <font:monoespaced>ajustar nível de log (DEBUG, INFO, ...)</font>
+    <font:monoespaced>  /help</font>                                                 <font:monoespaced>mostrar esta ajuda</font>
+    <font:monoespaced>  /quit</font>                                                  <font:monoespaced>encerrar (BYE + UNREGISTER)</font>
+"""
+    ---
+    }
+
+    LogCli -left-> CLI : < usa objeto
+    HelpCli .right.> CLI : < printa o valor
+}
+
+<> quit
+
+' Relacionamentos
+CLI "1" <--up-- "1" P2PClient : > integra a
+
+P2PClient "1" <-right- "1" RendezvousConnection : > importa protocolo
+P2PClient "1" *--up-- "1" makePeerId : > compõe o id do peer
+P2PClient "1" *--up-- quit
+quit --up-- "1" newMsgId : > cria mensagem de logout
+quit ...up... MsgType : > importa tipo BYE
+P2PClient <.up. PeerState : > atualiza estado de peer vizinho
+
+RendezvousConnection <.left. RdvType : > requisições do servidor
+RendezvousConnection <.up. decodeLine : > decodifica resolução
+RendezvousConnection <.up. encodeLine : > codifica requisição
+
+@enduml

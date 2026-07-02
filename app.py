@@ -63,7 +63,7 @@ class P2PGUIApp:
             "mode": "chrome",
             "host": "localhost",
             "port": 5000,
-            "size": (1050, 700)
+            "size": (1000, 900)
         }
         
         try:
